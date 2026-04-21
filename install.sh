@@ -48,6 +48,68 @@ detect_os() {
     print_info "Detected OS: $OS"
 }
 
+# Install Homebrew on macOS
+install_homebrew() {
+    if command -v brew &> /dev/null; then
+        print_success "Homebrew already installed"
+        return 0
+    fi
+
+    print_info "Homebrew not found - installing Homebrew"
+    print_warning "This will require sudo access"
+
+    if /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; then
+        # Add Homebrew to PATH for Apple Silicon Macs
+        if [ -f "/opt/homebrew/bin/brew" ]; then
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+        fi
+        print_success "Homebrew installed"
+        return 0
+    else
+        print_error "Failed to install Homebrew"
+        return 1
+    fi
+}
+
+# Install Python via package manager
+install_python() {
+    if [ "$OS" = "Mac" ]; then
+        print_info "Installing Python 3.12 via Homebrew"
+
+        if ! install_homebrew; then
+            print_error "Cannot install Python without Homebrew"
+            print_info "Please install Python manually from https://www.python.org/downloads/"
+            exit 1
+        fi
+
+        # Make sure brew is in PATH
+        if [ -f "/opt/homebrew/bin/brew" ]; then
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+        fi
+
+        if brew install python@3.12; then
+            print_success "Python 3.12 installed"
+            # Add Homebrew Python to PATH
+            export PATH="/opt/homebrew/opt/python@3.12/bin:$PATH"
+            return 0
+        else
+            print_error "Failed to install Python"
+            exit 1
+        fi
+    elif [ "$OS" = "Linux" ]; then
+        print_error "Python ${PYTHON_MIN_VERSION}+ is required but not found"
+        print_info "Please install Python 3.12+ using your package manager:"
+        print_info "  Ubuntu/Debian: sudo apt install python3.12"
+        print_info "  Fedora: sudo dnf install python3.12"
+        print_info "  Arch: sudo pacman -S python"
+        exit 1
+    else
+        print_error "Automatic Python installation not supported on this OS"
+        print_info "Please install Python from https://www.python.org/downloads/"
+        exit 1
+    fi
+}
+
 # Check Python version
 check_python() {
     print_info "Checking for Python ${PYTHON_MIN_VERSION}+"
@@ -63,7 +125,33 @@ check_python() {
         fi
     done
 
-    print_error "Python ${PYTHON_MIN_VERSION}+ is required but not found"
+    print_warning "Python ${PYTHON_MIN_VERSION}+ not found"
+
+    # Offer to install automatically
+    if [ "$OS" = "Mac" ]; then
+        print_info "Would you like to install Python 3.12 automatically via Homebrew?"
+        read -p "Install Python? (Y/n): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            install_python
+            # Retry Python detection
+            for py_cmd in python3.12 python3.13 python3.14 python3 python; do
+                if command -v "$py_cmd" &> /dev/null; then
+                    PY_VERSION=$("$py_cmd" -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+                    if [ "$(printf '%s\n' "$PYTHON_MIN_VERSION" "$PY_VERSION" | sort -V | head -n1)" = "$PYTHON_MIN_VERSION" ]; then
+                        PYTHON_CMD="$py_cmd"
+                        print_success "Found Python $PY_VERSION"
+                        return 0
+                    fi
+                fi
+            done
+            print_error "Python installation succeeded but Python not found in PATH"
+            print_info "Try closing and reopening your terminal, then run this script again"
+            exit 1
+        fi
+    fi
+
+    print_error "Cannot continue without Python ${PYTHON_MIN_VERSION}+"
     print_info "Please install Python from https://www.python.org/downloads/"
     exit 1
 }
