@@ -98,10 +98,20 @@ class ConnectionManager:
         if not self.key_manager.has_identity_key():
             # Generate new keypair
             public_key, private_key = self.key_manager.generate_identity_keypair(self.password)
+            # Keys just generated, reconstruct private key object
+            from cryptography.hazmat.primitives.asymmetric import x25519
+            self.private_key = x25519.X25519PrivateKey.from_private_bytes(private_key)
+            return True
 
-        # Load private key
+        # Load existing private key
         self.private_key = self.key_manager.load_private_key(self.password)
-        return self.private_key is not None
+        if self.private_key is None:
+            # Wrong password - delete corrupted keys to allow retry
+            import os
+            if os.path.exists(self.key_manager.db_path):
+                os.remove(self.key_manager.db_path)
+            return False
+        return True
 
     async def connect(self) -> bool:
         """Connect to the server and authenticate."""
