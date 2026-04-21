@@ -1,0 +1,22 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 3005,
+    "max_connections": 50
+  },
+  "database": {
+    "path": "data/server/server.db"
+  },
+  "security": {
+    "session_timeout_hours": 24,
+    "max_login_attempts": 5
+  },
+  "storage": {
+    "max_file_size_mb": 100,
+    "file_storage_path": "data/server/files"
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "data/server/server.log"
+  }
+}

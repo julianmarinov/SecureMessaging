@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# Runtime data (databases, logs, files)
+data/
+*.db
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+/tmp/
+
+# Credentials
+*.key
+*.pem
+credentials/
+secrets/
+
+# Local configuration (use .example files as templates)
+config/*_config.json
+!config/*_config.example.json
