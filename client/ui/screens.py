@@ -529,7 +529,10 @@ class ChatScreen(Screen):
     def update_conversation_list(self) -> None:
         """Update the list of conversations."""
         conv_list = self.query_one("#conversation_list", Container)
-        conv_list.remove_children()
+
+        # Remove all existing conversation items explicitly
+        for child in list(conv_list.children):
+            child.remove()
 
         # Separate channels and DMs
         channels_list = [name for name in self.conversations.keys() if name in self.channels]
