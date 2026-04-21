@@ -19,17 +19,28 @@ iwr -useb https://raw.githubusercontent.com/julianmarinov/SecureMessaging/main/i
 ```
 
 **Requirements:**
-- Python 3.12+
-- Git
+- Git (the installer will auto-install Python on macOS if needed)
 - 50MB disk space
 
-The installer will:
-1. Clone the repository
-2. Create a virtual environment
-3. Install dependencies
-4. Initialize the database
-5. Create your first user
-6. Set up launcher scripts
+The installer will automatically:
+1. Install Python 3.12 via Homebrew (macOS only, if needed)
+2. Clone the repository
+3. Create a virtual environment
+4. Install dependencies
+5. Initialize the database
+6. Create your first user
+7. Set up launcher scripts
+
+### Client-Only Installation
+
+To connect to an existing server without installing the server components:
+
+**macOS / Linux:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/julianmarinov/SecureMessaging/main/install-client-only.sh | bash
+```
+
+This installs only the client and prompts for the server address during setup.
 
 ### Manual Installation
 
