@@ -1,6 +1,61 @@
 # SecureMessaging
 
+[![License](https://img.shields.io/badge/license-Educational-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)]()
+
 Complete end-to-end encrypted terminal messaging system with file sharing, group channels, and read receipts.
+
+## One-Command Installation
+
+### macOS / Linux
+```bash
+curl -fsSL https://raw.githubusercontent.com/julianmarinov/SecureMessaging/main/install.sh | bash
+```
+
+### Windows (PowerShell)
+```powershell
+iwr -useb https://raw.githubusercontent.com/julianmarinov/SecureMessaging/main/install.ps1 | iex
+```
+
+**Requirements:**
+- Python 3.12+
+- Git
+- 50MB disk space
+
+The installer will:
+1. Clone the repository
+2. Create a virtual environment
+3. Install dependencies
+4. Initialize the database
+5. Create your first user
+6. Set up launcher scripts
+
+### Manual Installation
+
+If you prefer to install manually:
+
+```bash
+# Clone the repository
+git clone https://github.com/julianmarinov/SecureMessaging.git
+cd SecureMessaging
+
+# Create virtual environment
+python3.12 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Setup configuration
+cp config/server_config.example.json config/server_config.json
+
+# Initialize database
+python scripts/init_db.py
+
+# Create your first user
+python scripts/create_user.py <username>
+```
 
 ## Overview
 
@@ -27,33 +82,30 @@ Future enhancements could include: notification sounds, message editing, message
 
 ## Quick Start
 
-### 1. Server Setup
+After installation, start using SecureMessaging:
+
+### 1. Start the Server
 
 ```bash
-cd /home/julian/Claude/Projects/SecureMessaging
-
-# Activate virtual environment
-source .venv/bin/activate
-
-# Database is already initialized, but to reinitialize:
-# .venv/bin/python scripts/init_db.py
-
-# Create a user
-.venv/bin/python scripts/create_user.py alice
-
-# Start server
-.venv/bin/python server/server.py
+cd ~/SecureMessaging
+./securemsg-server
 ```
 
-Server runs on `ws://100.96.169.49:3005` (Tailscale network only).
+The server runs on `0.0.0.0:3005` by default (accessible from your local network).
 
-### 2. TUI Client (Phase 3)
+### 2. Start the Client
 
-Launch the Textual Terminal UI client:
+Open a new terminal and launch the client:
 
 ```bash
-cd /home/julian/Claude/Projects/SecureMessaging
-./scripts/launch_tui.sh
+cd ~/SecureMessaging
+./securemsg
+```
+
+On Windows:
+```cmd
+cd %USERPROFILE%\SecureMessaging
+securemsg.bat
 ```
 
 **Usage:**
@@ -76,30 +128,25 @@ cd /home/julian/Claude/Projects/SecureMessaging
 - (N) = N unread messages
 - 📎 = File available
 
-### 3. Command-Line Test Client (Phase 1/2)
-
-For testing or headless usage:
+### 3. Create Additional Users
 
 ```bash
-cd /home/julian/Claude/Projects/SecureMessaging
+cd ~/SecureMessaging
 source .venv/bin/activate
-
-# Simple test client (Phase 1)
-.venv/bin/python scripts/test_client.py alice <password>
-
-# Encrypted test client (Phase 2)
-.venv/bin/python scripts/encrypted_client.py alice <password>
+python scripts/create_user.py <username>
 ```
-
-**Commands:**
-- `/msg <user> <message>` - Send encrypted message
-- `/plain <user> <message>` - Send plaintext (Phase 1 compat)
-- `/key <user>` - Get user's public key
-- `/quit` - Disconnect
 
 ### 4. Multi-User Testing
 
 Open multiple terminals and connect different users to test real-time encrypted messaging.
+
+For headless testing, you can use the command-line clients:
+
+```bash
+cd ~/SecureMessaging
+source .venv/bin/activate
+python scripts/encrypted_client.py <username> <password>
+```
 
 ## Architecture
 
@@ -201,13 +248,46 @@ Server config: `config/server_config.json`
 pip install -r requirements.txt
 ```
 
-## Deployment (Future)
+## Deployment
 
-Server will run as systemd service with sandboxing:
-- Dedicated system user
-- AppArmor/SELinux
-- Resource limits
-- Tailscale network only
+The installation script creates launcher scripts for easy deployment.
+
+### Running as a Service (Linux)
+
+Create a systemd service file at `/etc/systemd/system/securemsg.service`:
+
+```ini
+[Unit]
+Description=SecureMessaging Server
+After=network.target
+
+[Service]
+Type=simple
+User=yourusername
+WorkingDirectory=/home/yourusername/SecureMessaging
+ExecStart=/home/yourusername/SecureMessaging/securemsg-server
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then enable and start:
+```bash
+sudo systemctl enable securemsg
+sudo systemctl start securemsg
+```
+
+### Network Configuration
+
+By default, the server binds to `0.0.0.0:3005` (all interfaces).
+
+For production deployments:
+- Use a reverse proxy (nginx, Caddy) with TLS
+- Configure firewall rules
+- Consider Tailscale for zero-trust networking
+- Run behind a VPN for private networks
 
 ## Educational Goals
 

@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = 'SilentlyContinue'
 
 # Configuration
-$RepoUrl = "https://github.com/YOUR_USERNAME/SecureMessaging.git"
+$RepoUrl = "https://github.com/julianmarinov/SecureMessaging.git"
 $PythonMinVersion = [version]"3.12.0"
 
 # Colors and symbols
@@ -224,6 +224,6 @@ To create additional users:
 Configuration file: config\server_config.json
 
 Documentation: $InstallDir\README.md
-Visit: https://github.com/YOUR_USERNAME/SecureMessaging
+Visit: https://github.com/julianmarinov/SecureMessaging
 
 "@ -ForegroundColor Green

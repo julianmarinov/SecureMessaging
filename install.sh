@@ -5,7 +5,7 @@ set -e
 # Supports macOS and Linux
 
 VERSION="1.0.0"
-REPO_URL="https://github.com/YOUR_USERNAME/SecureMessaging.git"
+REPO_URL="https://github.com/julianmarinov/SecureMessaging.git"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/SecureMessaging}"
 PYTHON_MIN_VERSION="3.12"
 
@@ -240,7 +240,7 @@ print_instructions() {
     echo "Configuration file: config/server_config.json"
     echo
     echo "Documentation: $INSTALL_DIR/README.md"
-    echo "Visit: https://github.com/YOUR_USERNAME/SecureMessaging"
+    echo "Visit: https://github.com/julianmarinov/SecureMessaging"
     echo
 }
 
