@@ -530,16 +530,19 @@ class ChatScreen(Screen):
         """Update the list of conversations."""
         conv_list = self.query_one("#conversation_list", Container)
 
-        # Remove all existing conversation items explicitly
-        for child in list(conv_list.children):
-            child.remove()
+        # Use Textual's built-in method to remove all children synchronously
+        if conv_list.children:
+            conv_list.remove_children()
 
         # Separate channels and DMs
         channels_list = [name for name in self.conversations.keys() if name in self.channels]
         dms_list = [name for name in self.conversations.keys() if name not in self.channels]
 
+        # Collect all widgets to mount at once
+        widgets_to_mount = []
+
         # Show channels first
-        for channel in sorted(channels_list):
+        for idx, channel in enumerate(sorted(channels_list)):
             is_selected = channel == self.current_conversation
             class_name = "conversation_item_selected" if is_selected else "conversation_item"
 
@@ -548,11 +551,13 @@ class ChatScreen(Screen):
             unread_badge = f" ({unread})" if unread > 0 and not is_selected else ""
             display_name = f"#{channel}{unread_badge}"
 
-            item = Button(display_name, classes=class_name, id=f"conv_{channel}")
-            conv_list.mount(item)
+            # Use index to ensure unique IDs
+            item = Button(display_name, classes=class_name, id=f"conv_ch_{idx}_{channel}")
+            item.data_name = channel  # Store actual name for lookup
+            widgets_to_mount.append(item)
 
         # Then show DMs
-        for username in sorted(dms_list):
+        for idx, username in enumerate(sorted(dms_list)):
             is_selected = username == self.current_conversation
             class_name = "conversation_item_selected" if is_selected else "conversation_item"
 
@@ -561,15 +566,22 @@ class ChatScreen(Screen):
             unread_badge = f" ({unread})" if unread > 0 and not is_selected else ""
             display_name = f"{username}{unread_badge}"
 
-            item = Button(display_name, classes=class_name, id=f"conv_{username}")
-            conv_list.mount(item)
+            # Use index to ensure unique IDs
+            item = Button(display_name, classes=class_name, id=f"conv_dm_{idx}_{username}")
+            item.data_name = username  # Store actual name for lookup
+            widgets_to_mount.append(item)
+
+        # Mount all widgets at once
+        if widgets_to_mount:
+            conv_list.mount(*widgets_to_mount)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle clicking on conversation items."""
         button = event.button
         if button.id and button.id.startswith("conv_"):
-            name = button.id[5:]  # Remove "conv_" prefix
-            if name in self.conversations:
+            # Use stored data_name attribute instead of parsing ID
+            name = getattr(button, 'data_name', None)
+            if name and name in self.conversations:
                 self.select_conversation(name)
 
     def select_conversation(self, name: str) -> None:
