@@ -123,7 +123,7 @@ check_python() {
     # Offer to install automatically
     if [ "$OS" = "Mac" ]; then
         print_info "Would you like to install Python 3.12 automatically via Homebrew?"
-        read -p "Install Python? (Y/n): " -n 1 -r
+        read -p "Install Python? (Y/n): " -n 1 -r < /dev/tty
         echo
         if [[ ! $REPLY =~ ^[Nn]$ ]]; then
             install_python
@@ -153,7 +153,7 @@ check_python() {
 setup_repo() {
     if [ -d "$INSTALL_DIR" ]; then
         print_warning "Directory $INSTALL_DIR already exists"
-        read -p "Continue with existing directory? (y/N): " -n 1 -r
+        read -p "Continue with existing directory? (y/N): " -n 1 -r < /dev/tty
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             print_info "Installation cancelled"
@@ -216,10 +216,10 @@ configure_server() {
     print_info "Server Configuration"
     echo
 
-    read -p "Enter server IP address (default: 100.96.169.49): " server_host
+    read -p "Enter server IP address (default: 100.96.169.49): " server_host < /dev/tty
     server_host=${server_host:-100.96.169.49}
 
-    read -p "Enter server port (default: 3005): " server_port
+    read -p "Enter server port (default: 3005): " server_port < /dev/tty
     server_port=${server_port:-3005}
 
     print_success "Client will connect to ws://$server_host:$server_port"

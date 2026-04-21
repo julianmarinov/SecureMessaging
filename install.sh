@@ -130,7 +130,7 @@ check_python() {
     # Offer to install automatically
     if [ "$OS" = "Mac" ]; then
         print_info "Would you like to install Python 3.12 automatically via Homebrew?"
-        read -p "Install Python? (Y/n): " -n 1 -r
+        read -p "Install Python? (Y/n): " -n 1 -r < /dev/tty
         echo
         if [[ ! $REPLY =~ ^[Nn]$ ]]; then
             install_python
@@ -160,7 +160,7 @@ check_python() {
 setup_repo() {
     if [ -d "$INSTALL_DIR" ]; then
         print_warning "Directory $INSTALL_DIR already exists"
-        read -p "Continue with existing directory? (y/N): " -n 1 -r
+        read -p "Continue with existing directory? (y/N): " -n 1 -r < /dev/tty
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             print_info "Installation cancelled"
@@ -221,7 +221,7 @@ init_database() {
 
     if [ -f "data/server/server.db" ]; then
         print_warning "Database already exists"
-        read -p "Reinitialize database? (y/N): " -n 1 -r
+        read -p "Reinitialize database? (y/N): " -n 1 -r < /dev/tty
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             rm -f data/server/server.db
@@ -241,10 +241,10 @@ create_user() {
     source .venv/bin/activate
 
     print_info "Would you like to create a user now?"
-    read -p "Create user? (Y/n): " -n 1 -r
+    read -p "Create user? (Y/n): " -n 1 -r < /dev/tty
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-        read -p "Enter username: " username
+        read -p "Enter username: " username < /dev/tty
         if [ -n "$username" ]; then
             python scripts/create_user.py "$username"
             print_success "User created"
@@ -284,7 +284,7 @@ setup_path() {
     if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
         print_info "Would you like to add SecureMessaging to your PATH?"
         print_info "This will allow you to run 'securemsg' and 'securemsg-server' from anywhere"
-        read -p "Add to PATH? (y/N): " -n 1 -r
+        read -p "Add to PATH? (y/N): " -n 1 -r < /dev/tty
         echo
 
         if [[ $REPLY =~ ^[Yy]$ ]]; then
