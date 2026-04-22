@@ -9,9 +9,6 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = 'SilentlyContinue'
 
-# Detect if running via piped execution (iwr | iex)
-$isPiped = $MyInvocation.CommandOrigin -eq 'Runspace' -or $Host.Name -eq 'ConsoleHost' -and -not $MyInvocation.MyCommand.Path
-
 # Function to pause at end
 function Wait-ForKeyPress {
     if (-not $NoPause) {
@@ -25,11 +22,17 @@ function Wait-ForKeyPress {
 $RepoUrl = "https://github.com/julianmarinov/SecureMessaging.git"
 $PythonMinVersion = [version]"3.12.0"
 
-# Colors and symbols
-function Write-Info { Write-Host "ℹ $args" -ForegroundColor Blue }
-function Write-Success { Write-Host "✓ $args" -ForegroundColor Green }
-function Write-Error { Write-Host "✗ $args" -ForegroundColor Red }
-function Write-Warning { Write-Host "⚠ $args" -ForegroundColor Yellow }
+# Colors and symbols - use ASCII fallbacks for PowerShell 5.1 compatibility
+if ($PSVersionTable.PSVersion.Major -ge 6) {
+    $script:Symbols = @{ Info = "ℹ"; Success = "✓"; Error = "✗"; Warning = "⚠" }
+} else {
+    $script:Symbols = @{ Info = "[i]"; Success = "[+]"; Error = "[x]"; Warning = "[!]" }
+}
+
+function Write-Info { Write-Host "$($script:Symbols.Info) $args" -ForegroundColor Blue }
+function Write-Success { Write-Host "$($script:Symbols.Success) $args" -ForegroundColor Green }
+function Write-Error { Write-Host "$($script:Symbols.Error) $args" -ForegroundColor Red }
+function Write-Warning { Write-Host "$($script:Symbols.Warning) $args" -ForegroundColor Yellow }
 
 # Banner
 Write-Host @"
@@ -56,7 +59,7 @@ $pythonCandidates = @("python3.12", "python3.13", "python3.14", "python3", "pyth
 
 foreach ($cmd in $pythonCandidates) {
     try {
-        $version = & $cmd --version 2>&1 | Select-String -Pattern "Python (\d+\.\d+\.\d+)" | ForEach-Object { $_.Matches.Groups[1].Value }
+        $version = & $cmd --version 2>&1 | Select-String -Pattern "Python (\d+\.\d+(?:\.\d+)?)" | ForEach-Object { $_.Matches.Groups[1].Value }
         if ($version) {
             $pyVersion = [version]$version
             if ($pyVersion -ge $PythonMinVersion) {
@@ -177,7 +180,7 @@ $createUser = Read-Host "Would you like to create a user now? (Y/n)"
 if ($createUser -ne 'n' -and $createUser -ne 'N') {
     $username = Read-Host "Enter username"
     if ($username) {
-        & $venvPython scripts\create_user.py $username
+        & $venvPython "scripts\create_user.py" "$username"
         Write-Success "User created"
     }
 }
@@ -189,29 +192,33 @@ Write-Info "Creating launcher scripts"
 @"
 @echo off
 cd /d "%~dp0"
-call .venv\Scripts\activate.bat
-python server\server.py %*
+call "%~dp0.venv\Scripts\activate.bat"
+"%~dp0.venv\Scripts\python.exe" "%~dp0server\server.py" %*
 "@ | Out-File -FilePath "securemsg-server.bat" -Encoding ASCII
 
 # Client launcher
 @"
 @echo off
 cd /d "%~dp0"
-call .venv\Scripts\activate.bat
-python client\main.py %*
+call "%~dp0.venv\Scripts\activate.bat"
+"%~dp0.venv\Scripts\python.exe" "%~dp0client\main.py" %*
 "@ | Out-File -FilePath "securemsg.bat" -Encoding ASCII
 
 Write-Success "Created launchers: securemsg-server.bat and securemsg.bat"
 
 # Add to PATH
 $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ([string]::IsNullOrWhiteSpace($currentPath)) {
+    $currentPath = ""
+}
 if ($currentPath -notlike "*$InstallDir*") {
     Write-Info "Would you like to add SecureMessaging to your PATH?"
     Write-Info "This will allow you to run 'securemsg' and 'securemsg-server' from anywhere"
     $addPath = Read-Host "Add to PATH? (y/N)"
 
     if ($addPath -eq 'y' -or $addPath -eq 'Y') {
-        [Environment]::SetEnvironmentVariable("Path", "$currentPath;$InstallDir", "User")
+        $newPath = if ($currentPath) { "$currentPath;$InstallDir" } else { $InstallDir }
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
         Write-Success "Added to PATH"
         Write-Info "You may need to restart your terminal for changes to take effect"
     }

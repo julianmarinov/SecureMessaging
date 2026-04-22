@@ -8,6 +8,7 @@ import logging
 import base64
 from typing import Dict, Set, Optional, Any
 from datetime import datetime
+import websockets
 
 import sys
 from pathlib import Path
@@ -38,8 +39,10 @@ class MessageRouter:
                 old_websocket = self.connections[user_id]
                 try:
                     await old_websocket.close()
-                except Exception:
-                    pass  # Ignore errors closing old connection
+                except websockets.exceptions.ConnectionClosed:
+                    pass  # Already closed, expected
+                except Exception as e:
+                    logger.debug(f"Error closing old connection for user {user_id}: {e}")
 
             self.connections[user_id] = websocket
             self.user_sessions[user_id] = username
@@ -87,6 +90,10 @@ class MessageRouter:
             recipient_id = self.storage.get_user_id(recipient_username)
             if not recipient_id:
                 logger.warning(f"Recipient {recipient_username} not found")
+                return None
+            # Prevent self-messaging
+            if recipient_id == sender_id:
+                logger.warning(f"User {sender_id} attempted to message themselves")
                 return None
 
         elif channel_name:

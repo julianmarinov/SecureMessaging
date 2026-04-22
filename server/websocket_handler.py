@@ -192,12 +192,18 @@ class WebSocketHandler:
 
     async def _handle_request_public_key(self, websocket, message):
         """Handle public key request."""
+        import os
+
         username = message.get('username')
         if not username:
             await self._send_error(websocket, "Username required")
             return
 
         public_key = self.storage.get_public_key(username)
+
+        # Always generate dummy key for timing consistency (prevent username enumeration)
+        _ = os.urandom(32)
+
         if public_key:
             # Encode public key as base64 for JSON transmission
             public_key_b64 = base64.b64encode(public_key).decode('utf-8')
@@ -208,7 +214,8 @@ class WebSocketHandler:
             )
             await websocket.send(response.to_json())
         else:
-            await self._send_error(websocket, f"User {username} not found")
+            # Generic error - don't reveal if user exists
+            await self._send_error(websocket, "Unable to retrieve public key")
 
     def _validate_channel_name(self, channel_name: str) -> tuple:
         """
@@ -381,6 +388,20 @@ class WebSocketHandler:
 
         if not all([file_id, filename, encrypted_data]):
             await self._send_error(websocket, "Missing required file data")
+            return
+
+        # Enforce file size limit
+        from shared.constants import MAX_FILE_SIZE_MB
+        max_size_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
+
+        if size_bytes and size_bytes > max_size_bytes:
+            await self._send_error(websocket, f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB")
+            return
+
+        # Also verify actual data size
+        actual_size = len(base64.b64decode(encrypted_data))
+        if actual_size > max_size_bytes:
+            await self._send_error(websocket, f"File data exceeds maximum size of {MAX_FILE_SIZE_MB}MB")
             return
 
         # Sanitize filename to prevent path traversal
