@@ -96,6 +96,28 @@ def init_server_db(db_path: str):
         )
     """)
 
+    # File access control table (tracks who can download which files)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS file_access (
+            file_id TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (file_id, user_id),
+            FOREIGN KEY (file_id) REFERENCES files(file_id),
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+    """)
+
+    # Login attempts table (for persistent rate limiting)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            username TEXT PRIMARY KEY,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            last_attempt TIMESTAMP NOT NULL,
+            locked_until TIMESTAMP
+        )
+    """)
+
     # Create indexes for performance
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id)")

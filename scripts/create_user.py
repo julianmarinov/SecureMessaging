@@ -103,16 +103,48 @@ def main():
         print("Error: Username is required")
         sys.exit(1)
 
-    # Get password
-    password = getpass.getpass("Password: ")
-    password_confirm = getpass.getpass("Confirm password: ")
+    # Validate username length upfront
+    while len(username) < 3:
+        print("Error: Username must be at least 3 characters")
+        username = input("Username: ").strip()
+        if not username:
+            print("Error: Username is required")
+            sys.exit(1)
 
-    if password != password_confirm:
-        print("Error: Passwords do not match")
-        sys.exit(1)
+    # Get password with retry loop for validation
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        password = getpass.getpass("Password (min 8 characters): ")
 
-    if not password:
-        print("Error: Password is required")
+        if not password:
+            print("Error: Password is required")
+            continue
+
+        if len(password) < 8:
+            remaining = max_attempts - attempt - 1
+            if remaining > 0:
+                print(f"Error: Password must be at least 8 characters. {remaining} attempts remaining.")
+                continue
+            else:
+                print("Error: Too many failed attempts")
+                sys.exit(1)
+
+        password_confirm = getpass.getpass("Confirm password: ")
+
+        if password != password_confirm:
+            remaining = max_attempts - attempt - 1
+            if remaining > 0:
+                print(f"Error: Passwords do not match. {remaining} attempts remaining.")
+                continue
+            else:
+                print("Error: Too many failed attempts")
+                sys.exit(1)
+
+        # Password is valid, break out of loop
+        break
+    else:
+        # Loop completed without breaking (shouldn't happen but safety check)
+        print("Error: Password validation failed")
         sys.exit(1)
 
     # Optional: custom database path

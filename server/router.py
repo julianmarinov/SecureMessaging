@@ -3,9 +3,10 @@ Message routing for SecureMessaging server.
 Handles routing messages between users and broadcasting to channels.
 """
 
+import asyncio
 import logging
 import base64
-from typing import Dict, Set, Optional
+from typing import Dict, Set, Optional, Any
 from datetime import datetime
 
 import sys
@@ -23,30 +24,45 @@ class MessageRouter:
     def __init__(self, storage: ServerStorage):
         self.storage = storage
         # Map of user_id -> websocket connection
-        self.connections: Dict[int, any] = {}
+        self.connections: Dict[int, Any] = {}
         # Map of user_id -> username (for quick lookup)
         self.user_sessions: Dict[int, str] = {}
+        # Lock for thread-safe connection registry operations
+        self._connections_lock = asyncio.Lock()
 
-    def register_connection(self, user_id: int, username: str, websocket):
+    async def register_connection(self, user_id: int, username: str, websocket):
         """Register a new WebSocket connection."""
-        self.connections[user_id] = websocket
-        self.user_sessions[user_id] = username
+        async with self._connections_lock:
+            # Close existing connection if user is already connected
+            if user_id in self.connections:
+                old_websocket = self.connections[user_id]
+                try:
+                    await old_websocket.close()
+                except Exception:
+                    pass  # Ignore errors closing old connection
+
+            self.connections[user_id] = websocket
+            self.user_sessions[user_id] = username
+
         logger.info(f"User {username} (ID: {user_id}) connected")
 
         # Broadcast user online status
-        self._broadcast_user_status(username, online=True)
+        await self._broadcast_user_status(username, online=True)
 
-    def unregister_connection(self, user_id: int):
+    async def unregister_connection(self, user_id: int):
         """Unregister a WebSocket connection."""
-        if user_id in self.connections:
-            username = self.user_sessions.get(user_id, "unknown")
-            del self.connections[user_id]
-            if user_id in self.user_sessions:
-                del self.user_sessions[user_id]
-            logger.info(f"User {username} (ID: {user_id}) disconnected")
+        username = None
+        async with self._connections_lock:
+            if user_id in self.connections:
+                username = self.user_sessions.get(user_id, "unknown")
+                del self.connections[user_id]
+                if user_id in self.user_sessions:
+                    del self.user_sessions[user_id]
 
+        if username:
+            logger.info(f"User {username} (ID: {user_id}) disconnected")
             # Broadcast user offline status
-            self._broadcast_user_status(username, online=False)
+            await self._broadcast_user_status(username, online=False)
 
     async def route_message(
         self,
@@ -149,15 +165,21 @@ class MessageRouter:
             except Exception as e:
                 logger.error(f"Error sending to user {user_id}: {e}")
 
-    def _broadcast_user_status(self, username: str, online: bool):
+    async def _broadcast_user_status(self, username: str, online: bool):
         """Broadcast user online/offline status to all connected users."""
         message = Message(MessageType.USER_STATUS, username=username, online=online)
-        for user_id, websocket in list(self.connections.items()):
+        json_msg = message.to_json()
+
+        # Get a snapshot of connections under lock
+        async with self._connections_lock:
+            connections_snapshot = list(self.connections.items())
+
+        # Send to all connections (outside the lock to avoid blocking)
+        for user_id, websocket in connections_snapshot:
             try:
-                # Note: This is async but we're calling it sync here
-                # The WebSocket handler will need to handle this properly
-                import asyncio
-                asyncio.create_task(websocket.send(message.to_json()))
+                await asyncio.wait_for(websocket.send(json_msg), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout broadcasting status to user {user_id}")
             except Exception as e:
                 logger.error(f"Error broadcasting status to user {user_id}: {e}")
 

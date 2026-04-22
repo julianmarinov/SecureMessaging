@@ -5,6 +5,8 @@ Handles connection, authentication, and message routing.
 
 import asyncio
 import base64
+import json
+import logging
 from typing import Optional, Callable, Dict, Any
 from pathlib import Path
 import sys
@@ -15,6 +17,8 @@ import websockets
 from shared.protocol import Message, MessageType
 from client.crypto import KeyManager, MessageEncryptor, ECDHKeyExchange, ChannelKeyManager
 from client.file_manager import FileManager
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
@@ -57,6 +61,40 @@ class ConnectionManager:
 
         # Public key request tracking
         self.pending_key_requests = {}  # {username: asyncio.Future}
+
+        # Reconnection settings
+        self._reconnect_attempts = 0
+        self._max_reconnect_attempts = 10
+        self._reconnect_delay = 1.0  # Initial delay in seconds
+        self._max_reconnect_delay = 60.0  # Maximum delay
+        self._should_reconnect = True
+        self._reconnecting = False
+
+    async def _safe_send(self, message: str, timeout: float = 10.0) -> bool:
+        """
+        Safely send a message over websocket with null check and timeout.
+
+        Args:
+            message: JSON message to send
+            timeout: Maximum time to wait for send
+
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        if not self.websocket or not self.running:
+            return False
+
+        try:
+            await asyncio.wait_for(self.websocket.send(message), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            if self.on_error_callback:
+                await self.on_error_callback("Send timeout - server not responding")
+            return False
+        except Exception as e:
+            if self.on_error_callback:
+                await self.on_error_callback(f"Send error: {str(e)}")
+            return False
 
     def set_callbacks(
         self,
@@ -127,19 +165,25 @@ class ConnectionManager:
 
             # Authenticate
             msg = Message(MessageType.AUTHENTICATE, username=self.username, password=self.password)
-            await self.websocket.send(msg.to_json())
+            await self._safe_send(msg.to_json())
 
             # Wait for response
             response_str = await self.websocket.recv()
-            response = Message.from_json(response_str)
+            try:
+                response = Message.from_json(response_str)
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                if self.on_error_callback:
+                    await self.on_error_callback(f"Invalid server response: {str(e)}")
+                return False
 
             if response.type == MessageType.AUTHENTICATED:
                 self.token = response.get('token')
                 self.authenticated = True
                 self.running = True
 
-                # Start message receiver
+                # Start message receiver with exception callback
                 self.receiver_task = asyncio.create_task(self._receive_messages())
+                self.receiver_task.add_done_callback(self._receiver_task_done)
 
                 return True
             else:
@@ -153,9 +197,31 @@ class ConnectionManager:
                 await self.on_error_callback(f"Connection error: {str(e)}")
             return False
 
+    def _receiver_task_done(self, task: asyncio.Task):
+        """Callback when receiver task completes or fails."""
+        try:
+            # Get the exception if any (this won't raise)
+            exc = task.exception()
+            if exc:
+                logger.error(f"Receiver task failed with exception: {exc}")
+                # Schedule error callback on the event loop
+                if self.on_error_callback:
+                    asyncio.create_task(self.on_error_callback(f"Receiver error: {exc}"))
+        except asyncio.CancelledError:
+            pass  # Task was cancelled, that's fine
+        except asyncio.InvalidStateError:
+            pass  # Task still running, shouldn't happen in done callback
+
     async def disconnect(self):
         """Disconnect from the server."""
+        self._should_reconnect = False  # Disable reconnection on intentional disconnect
         self.running = False
+
+        # Clean up pending key requests
+        for username, future in list(self.pending_key_requests.items()):
+            if not future.done():
+                future.cancel()
+        self.pending_key_requests.clear()
 
         if self.receiver_task:
             self.receiver_task.cancel()
@@ -165,13 +231,21 @@ class ConnectionManager:
                 pass
 
         if self.websocket:
-            await self.websocket.close()
+            try:
+                await self.websocket.close()
+            except Exception:
+                pass  # Ignore errors during close
+            self.websocket = None
 
     async def _receive_messages(self):
         """Background task to receive and process messages."""
         try:
             async for message_str in self.websocket:
-                message = Message.from_json(message_str)
+                try:
+                    message = Message.from_json(message_str)
+                except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    logger.warning(f"Failed to parse message: {e}")
+                    continue  # Skip malformed messages
 
                 if message.type == MessageType.NEW_MESSAGE:
                     await self._handle_new_message(message)
@@ -195,7 +269,11 @@ class ConnectionManager:
                     public_key_b64 = message.get('public_key')
 
                     if public_key_b64 and username:
-                        public_key = base64.b64decode(public_key_b64)
+                        try:
+                            public_key = base64.b64decode(public_key_b64)
+                        except Exception as e:
+                            logger.warning(f"Failed to decode public key for {username}: {e}")
+                            continue
 
                         # Cache it
                         self.key_manager.cache_public_key(username, public_key)
@@ -252,11 +330,77 @@ class ConnectionManager:
 
         except websockets.exceptions.ConnectionClosed:
             self.running = False
-            if self.on_error_callback:
+            self.websocket = None
+            if self._should_reconnect and not self._reconnecting:
+                await self._attempt_reconnect()
+            elif self.on_error_callback:
                 await self.on_error_callback("Connection closed")
         except Exception as e:
+            self.running = False
             if self.on_error_callback:
                 await self.on_error_callback(f"Receive error: {str(e)}")
+            if self._should_reconnect and not self._reconnecting:
+                await self._attempt_reconnect()
+
+    async def _attempt_reconnect(self):
+        """Attempt to reconnect with exponential backoff."""
+        if self._reconnecting:
+            return
+
+        self._reconnecting = True
+
+        while self._should_reconnect and self._reconnect_attempts < self._max_reconnect_attempts:
+            self._reconnect_attempts += 1
+            delay = min(
+                self._reconnect_delay * (2 ** (self._reconnect_attempts - 1)),
+                self._max_reconnect_delay
+            )
+
+            logger.info(f"Reconnecting in {delay:.1f}s (attempt {self._reconnect_attempts}/{self._max_reconnect_attempts})")
+            if self.on_error_callback:
+                await self.on_error_callback(f"Reconnecting in {delay:.1f}s...")
+
+            await asyncio.sleep(delay)
+
+            if not self._should_reconnect:
+                break
+
+            try:
+                # Attempt to reconnect
+                self.websocket = await websockets.connect(self.server_url)
+
+                # Re-authenticate
+                msg = Message(MessageType.AUTHENTICATE, username=self.username, password=self.password)
+                await self.websocket.send(msg.to_json())
+
+                response_str = await self.websocket.recv()
+                response = Message.from_json(response_str)
+
+                if response.type == MessageType.AUTHENTICATED:
+                    self.token = response.get('token')
+                    self.authenticated = True
+                    self.running = True
+                    self._reconnect_attempts = 0  # Reset counter on success
+                    self._reconnecting = False
+
+                    # Restart message receiver
+                    self.receiver_task = asyncio.create_task(self._receive_messages())
+
+                    logger.info("Reconnected successfully")
+                    if self.on_status_callback:
+                        await self.on_status_callback("system", True)  # Notify reconnected
+
+                    return
+                else:
+                    logger.warning(f"Reconnection authentication failed: {response.get('error')}")
+
+            except Exception as e:
+                logger.warning(f"Reconnection attempt {self._reconnect_attempts} failed: {e}")
+
+        self._reconnecting = False
+        if self._reconnect_attempts >= self._max_reconnect_attempts:
+            if self.on_error_callback:
+                await self.on_error_callback("Failed to reconnect after maximum attempts")
 
     async def _handle_new_message(self, message: Message):
         """Handle incoming message and decrypt if needed."""
@@ -284,7 +428,13 @@ class ConnectionManager:
                         )
                         is_encrypted = True
                     else:
+                        logger.warning(f"Missing channel key for #{channel} - unable to decrypt message from {sender}")
                         plaintext = f"[No key for channel #{channel}]"
+                        # Notify UI of the issue
+                        if self.on_error_callback:
+                            asyncio.create_task(
+                                self.on_error_callback(f"Cannot decrypt message: missing key for #{channel}")
+                            )
                 else:
                     # Direct message - decrypt with ECDH
                     plaintext = ECDHKeyExchange.decrypt_from_sender(
@@ -301,7 +451,7 @@ class ConnectionManager:
         # Send delivery confirmation
         if message_id:
             confirm = Message(MessageType.MESSAGE_DELIVERED, message_id=message_id)
-            await self.websocket.send(confirm.to_json())
+            await self._safe_send(confirm.to_json())
 
         # Notify UI
         if self.on_message_callback:
@@ -359,7 +509,7 @@ class ConnectionManager:
             encrypted_payload=encrypted_payload
         )
 
-        await self.websocket.send(msg.to_json())
+        await self._safe_send(msg.to_json())
 
     async def _get_public_key(self, username: str) -> Optional[bytes]:
         """Get a user's public key (with caching)."""
@@ -374,7 +524,7 @@ class ConnectionManager:
 
         # Request from server
         msg = Message(MessageType.REQUEST_PUBLIC_KEY, auth_token=self.token, username=username)
-        await self.websocket.send(msg.to_json())
+        await self._safe_send(msg.to_json())
 
         # Wait for response (with timeout)
         try:
@@ -396,7 +546,7 @@ class ConnectionManager:
                 recipient=recipient,
                 channel=channel
             )
-            await self.websocket.send(msg.to_json())
+            await self._safe_send(msg.to_json())
 
     async def _send_encrypted_channel_message(self, channel: str, text: str):
         """Send encrypted channel message."""
@@ -418,7 +568,7 @@ class ConnectionManager:
             encrypted_payload=encrypted_payload
         )
 
-        await self.websocket.send(msg.to_json())
+        await self._safe_send(msg.to_json())
 
     async def create_channel(self, channel_name: str):
         """Create a new channel."""
@@ -450,18 +600,25 @@ class ConnectionManager:
         self.channel_key_manager.store_channel_key(channel_name, channel_key)
 
         # Send create channel request
-        msg = Message(
-            MessageType.CREATE_CHANNEL,
-            auth_token=self.token,
-            channel_name=channel_name,
-            encrypted_channel_key=base64.b64encode(
+        try:
+            encrypted_key_combined = base64.b64encode(
                 base64.b64decode(encrypted_channel_key['ephemeral_public_key']) +
                 base64.b64decode(encrypted_channel_key['ciphertext']) +
                 base64.b64decode(encrypted_channel_key['nonce'])
             ).decode('utf-8')
+        except Exception as e:
+            if self.on_error_callback:
+                await self.on_error_callback(f"Failed to encode channel key: {e}")
+            return
+
+        msg = Message(
+            MessageType.CREATE_CHANNEL,
+            auth_token=self.token,
+            channel_name=channel_name,
+            encrypted_channel_key=encrypted_key_combined
         )
 
-        await self.websocket.send(msg.to_json())
+        await self._safe_send(msg.to_json())
 
     async def join_channel(self, channel_name: str, channel_key: bytes):
         """Join an existing channel."""
@@ -489,30 +646,37 @@ class ConnectionManager:
         self.channel_key_manager.store_channel_key(channel_name, channel_key)
 
         # Send join channel request
-        msg = Message(
-            MessageType.JOIN_CHANNEL,
-            auth_token=self.token,
-            channel_name=channel_name,
-            encrypted_channel_key=base64.b64encode(
+        try:
+            encrypted_key_combined = base64.b64encode(
                 base64.b64decode(encrypted_channel_key['ephemeral_public_key']) +
                 base64.b64decode(encrypted_channel_key['ciphertext']) +
                 base64.b64decode(encrypted_channel_key['nonce'])
             ).decode('utf-8')
+        except Exception as e:
+            if self.on_error_callback:
+                await self.on_error_callback(f"Failed to encode channel key: {e}")
+            return
+
+        msg = Message(
+            MessageType.JOIN_CHANNEL,
+            auth_token=self.token,
+            channel_name=channel_name,
+            encrypted_channel_key=encrypted_key_combined
         )
 
-        await self.websocket.send(msg.to_json())
+        await self._safe_send(msg.to_json())
 
     async def list_channels(self):
         """Request list of all channels."""
         if self.authenticated:
             msg = Message(MessageType.LIST_CHANNELS, auth_token=self.token)
-            await self.websocket.send(msg.to_json())
+            await self._safe_send(msg.to_json())
 
     async def list_users(self):
         """Request list of online users."""
         if self.authenticated:
             msg = Message(MessageType.LIST_USERS, auth_token=self.token)
-            await self.websocket.send(msg.to_json())
+            await self._safe_send(msg.to_json())
 
     async def upload_file(
         self,
@@ -577,7 +741,7 @@ class ConnectionManager:
                 file_hash=upload_info['file_hash']
             )
 
-            await self.websocket.send(msg.to_json())
+            await self._safe_send(msg.to_json())
 
         except Exception as e:
             if self.on_error_callback:
@@ -587,7 +751,7 @@ class ConnectionManager:
         """Request file download."""
         if self.authenticated:
             msg = Message(MessageType.DOWNLOAD_FILE, auth_token=self.token, file_id=file_id)
-            await self.websocket.send(msg.to_json())
+            await self._safe_send(msg.to_json())
 
     async def _handle_file_available(self, message: Message):
         """Handle file available notification."""
@@ -631,7 +795,13 @@ class ConnectionManager:
         if not encrypted_data_b64:
             return
 
-        encrypted_data = base64.b64decode(encrypted_data_b64)
+        try:
+            encrypted_data = base64.b64decode(encrypted_data_b64)
+        except Exception as e:
+            logger.error(f"Failed to decode file data for {file_id}: {e}")
+            if self.on_error_callback:
+                await self.on_error_callback(f"Failed to decode file data: {e}")
+            return
 
         # Get file info
         file_info = self.file_manager.get_available_file(file_id)

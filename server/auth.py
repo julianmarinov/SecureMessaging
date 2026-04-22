@@ -16,19 +16,40 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from shared.constants import SESSION_TIMEOUT_HOURS, MAX_LOGIN_ATTEMPTS
 
+# Dummy hash for timing attack prevention - pre-computed Argon2 hash
+# This ensures consistent timing whether user exists or not
+DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$YmFzZTY0c2FsdA$dummyhashfortimingtiming"
+
 class AuthManager:
     """Manages authentication and sessions."""
 
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.password_hasher = PasswordHasher()
-        self.login_attempts = {}  # username -> (count, last_attempt_time)
+        self._ensure_login_attempts_table()
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get database connection."""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def _ensure_login_attempts_table(self):
+        """Ensure the login_attempts table exists."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS login_attempts (
+                    username TEXT PRIMARY KEY,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    last_attempt TIMESTAMP NOT NULL,
+                    locked_until TIMESTAMP
+                )
+            """)
+            conn.commit()
+        finally:
+            conn.close()
 
     def verify_password(self, username: str, password: str) -> Tuple[bool, Optional[int], Optional[str]]:
         """
@@ -37,16 +58,9 @@ class AuthManager:
         Returns:
             (success, user_id, error_message)
         """
-        # Check login attempts
-        if username in self.login_attempts:
-            count, last_attempt = self.login_attempts[username]
-            if count >= MAX_LOGIN_ATTEMPTS:
-                # Lock for 15 minutes after max attempts
-                if datetime.now() - last_attempt < timedelta(minutes=15):
-                    return False, None, "Too many failed attempts. Try again later."
-                else:
-                    # Reset counter after lockout period
-                    del self.login_attempts[username]
+        # Check login attempts from database (persistent across restarts)
+        if self._is_account_locked(username):
+            return False, None, "Too many failed attempts. Try again later."
 
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -59,6 +73,12 @@ class AuthManager:
             row = cursor.fetchone()
 
             if not row:
+                # Perform dummy verification to prevent timing attack
+                # This ensures the response time is similar whether user exists or not
+                try:
+                    self.password_hasher.verify(DUMMY_HASH, password)
+                except VerifyMismatchError:
+                    pass  # Expected - just ensuring consistent timing
                 self._record_failed_attempt(username)
                 return False, None, "Invalid username or password"
 
@@ -79,8 +99,7 @@ class AuthManager:
                     conn.commit()
 
                 # Clear failed attempts on success
-                if username in self.login_attempts:
-                    del self.login_attempts[username]
+                self._clear_login_attempts(username)
 
                 return True, user_id, None
 
@@ -92,12 +111,67 @@ class AuthManager:
             conn.close()
 
     def _record_failed_attempt(self, username: str):
-        """Record a failed login attempt."""
-        if username in self.login_attempts:
-            count, _ = self.login_attempts[username]
-            self.login_attempts[username] = (count + 1, datetime.now())
-        else:
-            self.login_attempts[username] = (1, datetime.now())
+        """Record a failed login attempt in the database."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            now = datetime.now()
+            cursor.execute(
+                """INSERT INTO login_attempts (username, attempt_count, last_attempt)
+                   VALUES (?, 1, ?)
+                   ON CONFLICT(username) DO UPDATE SET
+                   attempt_count = attempt_count + 1,
+                   last_attempt = ?,
+                   locked_until = CASE
+                       WHEN attempt_count + 1 >= ? THEN datetime(?, '+15 minutes')
+                       ELSE locked_until
+                   END""",
+                (username, now, now, MAX_LOGIN_ATTEMPTS, now)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _is_account_locked(self, username: str) -> bool:
+        """Check if account is currently locked due to failed attempts."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT attempt_count, locked_until FROM login_attempts
+                   WHERE username = ?""",
+                (username,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return False
+
+            # Check if locked and lock hasn't expired
+            if row['locked_until']:
+                locked_until = datetime.fromisoformat(row['locked_until'])
+                if datetime.now() < locked_until:
+                    return True
+                else:
+                    # Lock expired, clear the record
+                    self._clear_login_attempts(username)
+                    return False
+
+            return False
+        finally:
+            conn.close()
+
+    def _clear_login_attempts(self, username: str):
+        """Clear login attempts after successful login or lockout expiry."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "DELETE FROM login_attempts WHERE username = ?",
+                (username,)
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
     def create_session(self, user_id: int) -> str:
         """

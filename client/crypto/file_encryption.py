@@ -16,7 +16,10 @@ from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from shared.constants import KEY_SIZE, NONCE_SIZE
+from shared.constants import KEY_SIZE, NONCE_SIZE, MAX_FILE_SIZE_MB
+
+# Maximum file size in bytes (from constants, default 100MB)
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 
 class FileEncryptor:
@@ -43,7 +46,23 @@ class FileEncryptor:
 
         Returns:
             Tuple of (encrypted_data, file_hash)
+
+        Raises:
+            ValueError: If file exceeds maximum size limit
+            FileNotFoundError: If file does not exist
         """
+        # Check file size before reading
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        file_size = path.stat().st_size
+        if file_size > MAX_FILE_SIZE_BYTES:
+            raise ValueError(
+                f"File too large: {FileEncryptor.format_file_size(file_size)} "
+                f"exceeds maximum of {MAX_FILE_SIZE_MB}MB"
+            )
+
         # Read file
         with open(file_path, 'rb') as f:
             plaintext = f.read()
@@ -58,8 +77,10 @@ class FileEncryptor:
         # Prepend nonce to ciphertext
         encrypted_data = nonce + ciphertext
 
-        # Calculate hash of original file for integrity
-        file_hash = hashlib.sha256(plaintext).hexdigest()
+        # Calculate hash of encrypted data for integrity verification
+        # Note: We hash the ciphertext rather than plaintext to avoid
+        # leaking information about the file content
+        file_hash = hashlib.sha256(encrypted_data).hexdigest()
 
         return encrypted_data, file_hash
 

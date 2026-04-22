@@ -12,6 +12,27 @@ from .encryption import MessageEncryptor
 class ECDHKeyExchange:
     """Handles Elliptic Curve Diffie-Hellman key exchange."""
 
+    X25519_KEY_SIZE = 32  # X25519 public keys are always 32 bytes
+
+    @staticmethod
+    def _validate_public_key(public_key: bytes, name: str = "public key"):
+        """
+        Validate that a public key is valid for X25519.
+
+        Args:
+            public_key: Raw public key bytes
+            name: Name for error messages
+
+        Raises:
+            ValueError: If key is invalid
+        """
+        if not public_key:
+            raise ValueError(f"Invalid {name}: key is empty")
+        if len(public_key) != ECDHKeyExchange.X25519_KEY_SIZE:
+            raise ValueError(f"Invalid {name}: expected {ECDHKeyExchange.X25519_KEY_SIZE} bytes, got {len(public_key)}")
+        if public_key == bytes(ECDHKeyExchange.X25519_KEY_SIZE):
+            raise ValueError(f"Invalid {name}: key is all zeros")
+
     @staticmethod
     def perform_sender_exchange(
         recipient_public_key: bytes,
@@ -26,7 +47,13 @@ class ECDHKeyExchange:
 
         Returns:
             (shared_secret, ephemeral_public_key_bytes)
+
+        Raises:
+            ValueError: If public key is invalid
         """
+        # Validate public key
+        ECDHKeyExchange._validate_public_key(recipient_public_key, "recipient public key")
+
         # Load recipient's public key
         recipient_key = x25519.X25519PublicKey.from_public_bytes(recipient_public_key)
 
@@ -53,7 +80,13 @@ class ECDHKeyExchange:
 
         Returns:
             shared_secret
+
+        Raises:
+            ValueError: If public key is invalid
         """
+        # Validate public key
+        ECDHKeyExchange._validate_public_key(ephemeral_public_key, "ephemeral public key")
+
         # Load sender's ephemeral public key
         ephemeral_key = x25519.X25519PublicKey.from_public_bytes(ephemeral_public_key)
 

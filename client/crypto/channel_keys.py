@@ -14,7 +14,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
-from cryptography.hazmat.primitives import serialization
 
 from client.crypto.encryption import MessageEncryptor
 from client.crypto.key_exchange import ECDHKeyExchange
@@ -84,11 +83,8 @@ class ChannelKeyManager:
         # Encrypt channel key
         encrypted = MessageEncryptor.encrypt_message(channel_key_b64, encryption_key)
 
-        # Add ephemeral public key
-        ephemeral_public_bytes = ephemeral_public.public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw
-        )
+        # Add ephemeral public key (using raw bytes directly for consistency)
+        ephemeral_public_bytes = ephemeral_public.public_bytes_raw()
 
         return {
             'ephemeral_public_key': base64.b64encode(ephemeral_public_bytes).decode('utf-8'),
@@ -110,7 +106,17 @@ class ChannelKeyManager:
 
         Returns:
             Decrypted channel key (32 bytes)
+
+        Raises:
+            KeyError: If required keys are missing from payload
+            ValueError: If decryption fails
         """
+        # Validate required keys
+        required_keys = ['ephemeral_public_key', 'ciphertext', 'nonce']
+        missing_keys = [k for k in required_keys if k not in encrypted_payload]
+        if missing_keys:
+            raise KeyError(f"Missing required keys in encrypted payload: {missing_keys}")
+
         # Decode ephemeral public key
         ephemeral_public_bytes = base64.b64decode(encrypted_payload['ephemeral_public_key'])
         ephemeral_public = X25519PublicKey.from_public_bytes(ephemeral_public_bytes)

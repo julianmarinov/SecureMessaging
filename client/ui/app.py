@@ -27,7 +27,7 @@ class SecureMessagingApp(App):
         Binding("ctrl+c", "quit", "Quit", show=False),
     ]
 
-    def __init__(self, server_url: str = "ws://100.96.169.49:3005"):
+    def __init__(self, server_url: str = "ws://localhost:3005"):
         super().__init__()
         self.server_url = server_url
         self.connection: Optional[ConnectionManager] = None
@@ -344,8 +344,12 @@ class SecureMessagingApp(App):
 def main():
     """Entry point for the TUI client."""
     import sys
+    import os
 
-    server_url = "ws://100.96.169.49:3005"
+    # Server URL priority: CLI argument > environment variable > default
+    default_url = "ws://localhost:3005"
+    server_url = os.environ.get('SECURE_MESSAGING_SERVER', default_url)
+
     if len(sys.argv) > 1:
         server_url = sys.argv[1]
 

@@ -2,11 +2,24 @@
 # Requires PowerShell 5.1+ and Python 3.12+
 
 param(
-    [string]$InstallDir = "$env:USERPROFILE\SecureMessaging"
+    [string]$InstallDir = "$env:USERPROFILE\SecureMessaging",
+    [switch]$NoPause = $false
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = 'SilentlyContinue'
+
+# Detect if running via piped execution (iwr | iex)
+$isPiped = $MyInvocation.CommandOrigin -eq 'Runspace' -or $Host.Name -eq 'ConsoleHost' -and -not $MyInvocation.MyCommand.Path
+
+# Function to pause at end
+function Wait-ForKeyPress {
+    if (-not $NoPause) {
+        Write-Host ""
+        Write-Host "Press any key to close this window..." -ForegroundColor Cyan
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    }
+}
 
 # Configuration
 $RepoUrl = "https://github.com/julianmarinov/SecureMessaging.git"
@@ -32,6 +45,7 @@ Write-Host @"
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if ($isAdmin) {
     Write-Error "Please do not run this script as Administrator"
+    Wait-ForKeyPress
     exit 1
 }
 
@@ -61,6 +75,7 @@ if (-not $pythonCmd) {
     Write-Error "Python $PythonMinVersion+ is required but not found"
     Write-Info "Please install Python from https://www.python.org/downloads/"
     Write-Info "Make sure to check 'Add Python to PATH' during installation"
+    Wait-ForKeyPress
     exit 1
 }
 
@@ -73,6 +88,7 @@ try {
 catch {
     Write-Error "Git is required but not found"
     Write-Info "Please install Git from https://git-scm.com/download/win"
+    Wait-ForKeyPress
     exit 1
 }
 
@@ -82,6 +98,7 @@ if (Test-Path $InstallDir) {
     $continue = Read-Host "Continue with existing directory? (y/N)"
     if ($continue -ne 'y' -and $continue -ne 'Y') {
         Write-Info "Installation cancelled"
+        Wait-ForKeyPress
         exit 0
     }
 }
@@ -94,6 +111,7 @@ else {
     catch {
         Write-Error "Failed to clone repository: $_"
         Write-Info "You can manually clone: git clone $RepoUrl $InstallDir"
+        Wait-ForKeyPress
         exit 1
     }
 }
@@ -227,3 +245,6 @@ Documentation: $InstallDir\README.md
 Visit: https://github.com/julianmarinov/SecureMessaging
 
 "@ -ForegroundColor Green
+
+# Keep window open so user can read the output
+Wait-ForKeyPress

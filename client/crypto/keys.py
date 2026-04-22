@@ -4,6 +4,8 @@ Handles identity key generation, storage, and retrieval.
 """
 
 import os
+import ctypes
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Optional, Tuple
@@ -11,11 +13,40 @@ from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+from cryptography.exceptions import InvalidTag
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+logger = logging.getLogger(__name__)
+
 from shared.constants import KEY_SIZE
+
+
+def secure_zero_memory(data: bytes):
+    """
+    Securely zero out sensitive data in memory.
+
+    Note: This is a best-effort approach. Python's memory management
+    may still leave copies in memory. For maximum security, consider
+    using a secrets management system.
+    """
+    if not data or not isinstance(data, (bytes, bytearray)):
+        return
+
+    try:
+        # Get the address of the bytes object's buffer
+        # For bytearray, we can modify directly
+        if isinstance(data, bytearray):
+            for i in range(len(data)):
+                data[i] = 0
+        else:
+            # For immutable bytes, we try to use ctypes
+            # This is less reliable as Python may have copies
+            buffer = (ctypes.c_char * len(data)).from_buffer_copy(data)
+            ctypes.memset(buffer, 0, len(data))
+    except Exception:
+        pass  # Silently fail - best effort only
 
 class KeyManager:
     """Manages cryptographic keys for a user."""
@@ -72,13 +103,17 @@ class KeyManager:
         public_key = private_key.public_key()
 
         # Get raw bytes
-        private_key_bytes = private_key.private_bytes_raw()
+        private_key_bytes = bytearray(private_key.private_bytes_raw())
         public_key_bytes = public_key.public_bytes_raw()
 
-        # Encrypt and store private key
-        self._store_private_key(private_key_bytes, password)
+        try:
+            # Encrypt and store private key
+            self._store_private_key(bytes(private_key_bytes), password)
 
-        return public_key_bytes, private_key_bytes
+            return public_key_bytes, bytes(private_key_bytes)
+        finally:
+            # Zero out sensitive data after use
+            secure_zero_memory(private_key_bytes)
 
     def _derive_key_from_password(self, password: str, salt: bytes) -> bytes:
         """
@@ -95,7 +130,7 @@ class KeyManager:
             algorithm=hashes.SHA256(),
             length=KEY_SIZE,
             salt=salt,
-            iterations=100000,  # OWASP recommendation
+            iterations=600000,  # OWASP 2023 recommendation for SHA256
         )
         return kdf.derive(password.encode('utf-8'))
 
@@ -164,13 +199,22 @@ class KeyManager:
             cipher = ChaCha20Poly1305(decryption_key)
             nonce = encrypted_key[:12]
             ciphertext = encrypted_key[12:]
-            private_key_bytes = cipher.decrypt(nonce, ciphertext, None)
+            private_key_bytes = bytearray(cipher.decrypt(nonce, ciphertext, None))
 
-            # Reconstruct key object
-            return x25519.X25519PrivateKey.from_private_bytes(private_key_bytes)
+            try:
+                # Reconstruct key object
+                return x25519.X25519PrivateKey.from_private_bytes(bytes(private_key_bytes))
+            finally:
+                # Zero out sensitive data
+                secure_zero_memory(private_key_bytes)
 
-        except Exception:
-            # Wrong password or corrupted data
+        except InvalidTag:
+            # Wrong password - authentication tag mismatch
+            logger.debug("Private key decryption failed - incorrect password")
+            return None
+        except Exception as e:
+            # Other errors - log for debugging but don't expose details
+            logger.error(f"Unexpected error loading private key: {type(e).__name__}")
             return None
 
     def has_identity_key(self) -> bool:

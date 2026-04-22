@@ -223,31 +223,40 @@ class FileManager:
         if not file_key:
             raise ValueError("Could not decrypt file key")
 
+        # Verify hash of encrypted data before decryption
+        import hashlib
+        actual_hash = hashlib.sha256(encrypted_data).hexdigest()
+        if actual_hash != file_info['file_hash']:
+            raise ValueError("File integrity check failed - data may have been tampered with")
+
         # Decrypt file
         plaintext = FileEncryptor.decrypt_file(encrypted_data, file_key)
 
-        # Verify hash
-        import hashlib
-        actual_hash = hashlib.sha256(plaintext).hexdigest()
-        if actual_hash != file_info['file_hash']:
-            raise ValueError("File integrity check failed")
+        # Sanitize filename to prevent path traversal
+        # Extract only the base filename, stripping any path components
+        raw_filename = file_info['filename']
+        safe_filename = Path(raw_filename).name  # Strips directory components
+        # Remove any remaining dangerous characters
+        safe_filename = safe_filename.replace('\x00', '').replace('/', '').replace('\\', '')
+        if not safe_filename or safe_filename in ('.', '..'):
+            safe_filename = f"download_{file_id}"
 
         # Save file
-        output_path = self.downloads_dir / file_info['filename']
+        output_path = self.downloads_dir / safe_filename
 
         # Handle duplicate filenames
         counter = 1
         while output_path.exists():
-            stem = Path(file_info['filename']).stem
-            suffix = Path(file_info['filename']).suffix
+            stem = Path(safe_filename).stem
+            suffix = Path(safe_filename).suffix
             output_path = self.downloads_dir / f"{stem}_{counter}{suffix}"
             counter += 1
 
         with open(output_path, 'wb') as f:
             f.write(plaintext)
 
-        # Remove from available files
-        del self.available_files[file_id]
+        # Remove from available files (thread-safe)
+        self.available_files.pop(file_id, None)
 
         return str(output_path)
 
